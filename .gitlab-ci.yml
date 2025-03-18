@@ -1,0 +1,73 @@
+# This is a gitlab-pipeline for this project.
+# It analysis the shell scripts as well as the python-code.
+# This pipline is run automatically when pushing any branch to a
+# giltlab-repository.
+# The stage 'publish' can be added to this pipeline, if you plan to publish
+# your python-project to pypi.
+---
+image: python:3.13
+
+variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+    paths:
+        - .cache/pip
+        - venv/
+
+before_script:
+    - python --version
+    - pip install virtualenv
+    - virtualenv venv
+    - source venv/bin/activate
+    - pip install ".[dev]"
+
+stages:
+    - static analysis
+    - testing
+    - build
+
+pylint:
+    stage: static analysis
+    script:
+        - pylint src/ --fail-under=9
+        - pylint tests/ --fail-under=9
+
+flake8:
+    stage: static analysis
+    script:
+        - flake8 src/
+        - flake8 tests/
+
+python-tests:
+    stage: testing
+    script:
+        - pytest -v tests/
+
+mypy:
+    stage: static analysis
+    script:
+        - mypy tests/
+        - mypy src/
+
+testpypi:
+    stage: build
+    only:
+        refs:
+            - master
+    script:
+        - pip install twine build
+        - python -m build
+        - python -m twine check dist/*
+
+# pypi:
+#     stage: publish
+#     only:
+#         refs:
+#             - master
+#     script:
+#         - pip install twine build
+#         - python -m build
+#         - python -m twine check dist/*
+#         - python -m twine upload --repository testpypi dist/*
+#         - python -m twine upload dist/*
