@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 
 class SchedulingField(Enum):
     """
-    Enum for alpha|beta|gamma field notation following the scheduling theory Pinedo (2016)  .
+    Enum for alpha|beta|gamma field notation following the scheduling theory Pinedo (2016).
     """
 
     # alpha field
@@ -18,10 +18,19 @@ class SchedulingField(Enum):
     FLOWSHOP = "F"
     JOBSHOP = "J"
     OPENSHOP = "O"
-    FLEXIBLE_FLOWSHOP = "FF"
-    FLEXIBLE_JOBSHOP = "FJ"
+    # as for now these flexible shops are balanced
+    FLEXIBLE_FLOWSHOP_IDENTICAL = "FF_P"
+    FLEXIBLE_FLOWSHOP_DIFFERENT = "FF_Q"
+    FLEXIBLE_FLOWSHOP_UNRELATED = "FF_R"
+    FLEXIBLE_JOBSHOP_IDENTICAL = "FJ_P"
+    FLEXIBLE_JOBSHOP_DIFFERENT = "FJ_Q"
+    FLEXIBLE_JOBSHOP_UNRELATED = "FJ_R"
+    FLEXIBLE_OPENSHOP_IDENTICAL = "FO_P"
+    FLEXIBLE_OPENSHOP_DIFFERENT = "FO_Q"
+    FLEXIBLE_OPENSHOP_UNRELATED = "FO_R"
     # DISTRIBUTED_FLOWSHOP = "DF"
     # DISTRIBUTED_JOBSHOP = "DJ"
+    # DISTRIBUTED_OPENSHOP = "DO"
 
     # beta field
     NO_CONSTRAINTS = ""
@@ -32,6 +41,8 @@ class SchedulingField(Enum):
     SETUP_TIMES = "s_ij"
     SEQUENCE_DEPENDENT_SETUP = "s_jk"
     MACHINE_ELIGIBILITY = "M_j"
+    MACHINE_CENTER_ELIGIBILITY = "M_j_c"
+    MACHINE_OPERATION_ELIGIBILITY = "M_"
     NO_WAIT = "nwt"
     PREEMPTION = "prmp"
     BLOCK = "block"
@@ -84,32 +95,46 @@ class InstanceEnvironment:
 
     _CONFLICTING_ALPHA_BETA_PAIRS = {
         ("1", "M_j"),
+        ("1", "M_j_c"),
         ("1", "rcrc"),
         ("1", "nwt"),
         ("P", "perm"),
         ("P", "nwt"),
         ("P", "rcrc"),
+        ("P", "M_j_c"),
         ("Q", "perm"),
         ("Q", "nwt"),
         ("Q", "rcrc"),
+        ("Q", "M_j_c"),
         ("R", "perm"),
         ("R", "nwt"),
         ("R", "rcrc"),
+        ("R", "M_j_c"),
         ("F", "prmp"),
         ("F", "M_j"),
         ("F", "rcrc"),
+        ("F", "M_j_c"),
         ("J", "block"),
         ("J", "perm"),
         ("J", "M_j"),
+        ("J", "M_j_c"),
         ("O", "block"),
         ("O", "perm"),
         ("O", "M_j"),
+        ("O", "M_j_c"),
         ("O", "rcrc"),
-        ("FF", "prmp"),
-        ("FF", "M_j"),
-        ("FF", "nwt"),
-        ("FF", "rcrc"),
-        ("FJ", "nwt")
+        ("FF_P", "prmp"),
+        ("FF_P", "nwt"),
+        ("FF_P", "rcrc"),
+        ("FF_Q", "prmp"),
+        ("FF_Q", "nwt"),
+        ("FF_Q", "rcrc"),
+        ("FF_R", "prmp"),
+        ("FF_R", "nwt"),
+        ("FF_R", "rcrc"),
+        ("FJ_P", "nwt"),
+        ("FJ_Q", "nwt"),
+        ("FJ_R", "nwt")
     }
 
     _CONFLICTING_BETA_PAIRS = {
@@ -122,6 +147,7 @@ class InstanceEnvironment:
         ("perm", "block"),
         ("batch", "nwt"),
         ("batch", "prmp"),
+        ("M_j", "M_j_c")
     }
 
     _WEIGHTED_GAMMA_FIELDS = {
@@ -143,8 +169,57 @@ class InstanceEnvironment:
     }
 
     _CENTER_ALPHA_FIELDS = {
-        "FF",
-        "FJ"
+        "FF_P",
+        "FF_Q",
+        "FF_R",
+        "FJ_P",
+        "FJ_Q",
+        "FJ_R",
+        "FO_P",
+        "FO_Q",
+        "FO_R",
+    }
+
+    _IDENTICAL_ALPHA_FIELDS = {
+        "P",
+        "FF_P",
+        "FJ_P",
+        "FO_P",
+    }
+
+    _DIFFERENT_ALPHA_FIELDS = {
+        "Q",
+        "FF_Q",
+        "FJ_Q",
+        "FO_Q",
+    }
+
+    _UNRELATED_ALPHA_FIELDS = {
+        "R",
+        "FF_R",
+        "FJ_R",
+        "FO_R",
+    }
+
+    _FLOWSHOP_ALPHA_FIELDS = {
+        "F",
+        "FF_P",
+        "FF_Q",
+        "FF_R",
+    }
+
+    _JOBSHOP_ALPHA_FIELDS = {
+        "J",
+        "FJ_P",
+        "FJ_Q",
+        "FJ_R",
+    }
+
+    _OPENSHOP_ALPHA_FIELDS = {
+        "O",
+        "FO_P",
+        "FO_Q",
+        "FO_R",
     }
 
     # not sure what to do with deadline
@@ -164,7 +239,8 @@ class InstanceEnvironment:
             beta (Optional[List[SchedulingField]]): List of constraints.
             gamma (SchedulingField): Objective function, defaults to SchedulingField.MAKESPAN.
             num_jobs (int): Number of jobs, defaults to 5.
-            num_machines (int): Number of machines, defaults to 1.
+            num_machines (int): Number of machines per center, defaults to 1.
+            num_centers (int): Number of machine centers, defaults to 1.
 
         Raises:
             ValueError: If beta contains conflicting or nonsensical combinations.
@@ -196,9 +272,20 @@ class InstanceEnvironment:
         self._validate_gamma_field()
         self._validate_gamma_beta_dependencies()
 
+        # alpha setup
+        self.is_identical: bool = False
+        self.is_different: bool = False
+        self.is_unrelated: bool = False
+        self.is_flowshop: bool = False
+        self.is_jobshop: bool = False
+        self.is_openshop: bool = False
+        self.is_distributed: bool = False
+        self._get_alpha_setup()
+
         # beta setup
         self.is_breakdown: bool = False
         self.is_eligible: bool = False
+        self.is_same_eligible_machines: bool = False
         self.is_release: bool = False
         self.is_due: bool = False
         self.is_deadline: bool = False
@@ -215,7 +302,7 @@ class InstanceEnvironment:
         self.sequence_setup: Optional[Tuple[bool,
                                             bool]] = self._get_is_fixed_sequence()
 
-        self.time_seed: int = self._generate_seed()
+        self.job_seed: int = self._generate_seed()
         self.machine_seed: int = self._generate_seed(True)  # unused this far
 
     def _get_num_operations(self) -> int:
@@ -225,6 +312,34 @@ class InstanceEnvironment:
         if self.alpha in equal_to_machines:
             return self.num_machines
         return 1
+    
+    def _get_alpha_setup(self) -> None:
+        """get setup information regarding alpha field"""
+        if self.alpha in self._IDENTICAL_ALPHA_FIELDS:
+            self.is_identical = True
+            self.is_different = False
+            self.is_unrelated = False
+        elif self.alpha in self._DIFFERENT_ALPHA_FIELDS:
+            self.is_identical = False
+            self.is_different = True
+            self.is_unrelated = False
+        elif self.alpha in self._UNRELATED_ALPHA_FIELDS:
+            self.is_identical = False
+            self.is_different = False
+            self.is_unrelated = True
+
+        if self.alpha in self._FLOWSHOP_ALPHA_FIELDS:
+            self.is_flowshop = True
+            self.is_jobshop = False
+            self.is_openshop = False
+        elif self.alpha in self._JOBSHOP_ALPHA_FIELDS:
+            self.is_flowshop = False
+            self.is_jobshop = True
+            self.is_openshop = False
+        elif self.alpha in self._OPENSHOP_ALPHA_FIELDS:
+            self.is_flowshop = False
+            self.is_jobshop = False
+            self.is_openshop = True
 
     def _get_beta_setup(self) -> None:
         """get setup information regarding beta field"""
@@ -235,6 +350,9 @@ class InstanceEnvironment:
             self.is_breakdown = True
         if SchedulingField.MACHINE_ELIGIBILITY in self.beta:
             self.is_eligible = True
+        if SchedulingField.MACHINE_CENTER_ELIGIBILITY in self.beta:
+            self.is_eligible = True
+            self.is_same_eligible_machines = True
         if SchedulingField.RELEASE_TIMES in self.beta:
             self.is_release = True
         if SchedulingField.DUE_DATES in self.beta:
@@ -387,7 +505,7 @@ class InstanceEnvironment:
         machines_str = str(
             self.num_machines) if self.num_machines is not None else "Unspecified"
         alpha_full = f"{alpha_str}{machines_str if self.num_machines and self.num_machines > 1 else ''}"
-        # , time_seed={self.time_seed}, machine_seed={self.machine_seed}"
+        # , job_seed={self.job_seed}, machine_seed={self.machine_seed}"
         return f"{alpha_full}|{beta_str}|{gamma_str}_n{self.num_jobs}"
 
 
@@ -401,7 +519,7 @@ if __name__ == "__main__":
         num_machines=7
     )
     print(env1)  # J7|prec,d_j|C_max
-    print(f"time_seed: {env1.time_seed}")
+    print(f"job_seed: {env1.job_seed}")
     print(f"machine_seed: {env1.machine_seed}")
 
     # valid: Single machine with due dates since default is cmax
@@ -410,7 +528,7 @@ if __name__ == "__main__":
         beta=[SchedulingField.DUE_DATES]
     )
     print(env2)  # 1|d_j|Cmax
-    print(f"time_seed: {env2.time_seed}")
+    print(f"job_seed: {env2.job_seed}")
     print(f"machine_seed: {env2.machine_seed}")
 
     # invalid: nwt and preemption

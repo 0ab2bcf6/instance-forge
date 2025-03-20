@@ -15,7 +15,7 @@ class Machine:
         """
         Initialize a Machine representing a resource for processing operations in a scheduling problem.
         """
-        self.id: int = id
+        self.id: int = id # change to tuple(i, k) ?
         self.name: str = f"{center.name}M{id}"
         self.center: Center = center
         self.processing_speed: float = processing_speed

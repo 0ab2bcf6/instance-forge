@@ -34,6 +34,6 @@ if __name__ == "__main__":
     )
     print(str(instance_env))
 
-    loader = DataLoader(instance_env, 1)
+    loader = DataLoader(instance_env, 10)
     for job in loader.get_instances()[0].jobs:
         print(job.name, [job1.name for job1 in job.predecessors])
