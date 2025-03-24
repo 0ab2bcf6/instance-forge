@@ -9,22 +9,23 @@ else:
     Job = Any
     Machine = Any
 
+class OperationInitializer:
+    """dummy class to hold inital operation parameters"""
+
+    def __init__(self, id: int) -> None:
+        self.id = id
+        self.eligible_machines: List[Machine] = []
+        self.processing_times: Dict[Machine, float] = {}
 
 class Operation:
-    def __init__(self, job: Optional[Job], machine: Optional[Machine] = None, processing_time: Optional[float] = None, eligible_machines: Optional[List[Machine]] = None, processing_times: Optional[Dict[Machine, float]] = None) -> None:
+    def __init__(self, initializer: OperationInitializer) -> None:
         """
         Initialize an Operation representing a single processing step in a scheduling problem.
         """
-        self.name: Optional[str] = ""
-        self.job: Optional[Job] = job
-        self.machine: Optional[Machine] = machine
-        self.processing_time: Optional[float] = processing_time
-        self.eligible_machines: Optional[List[Machine]] = eligible_machines
-        self.processing_times: Optional[Dict[Machine,
-                                             float]] = processing_times
-
-        self.preemption: bool = False
-        self._is_initialized: bool = False
+        self.id = initializer.id
+        self.name: str = ""
+        self.eligible_machines: List[Machine] = initializer.eligible_machines
+        self.processing_times: Dict[Machine, float] = initializer.processing_times
     
     def initialize_operation(self, job: Job, machine: Optional[Machine] = None) -> None:
         if not self._is_initialized:

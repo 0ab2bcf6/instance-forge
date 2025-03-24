@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 
 import math
-from multiprocessing import Value
 import random
 from typing import Dict, List, Optional, Tuple
 
 from center import Center
-from job import Job
+from job import Job, JobInitializer
+from instanceconfig import InstanceConfig
 from machine import Machine
-from operation import Operation
-from schedulingfield import SchedulingField, InstanceEnvironment
+from operation import Operation, OperationInitializer
+from schedulingfield import InstanceEnvironment
 
 
 class Instance:
@@ -23,61 +23,38 @@ class Instance:
         """
         if instance_environment is None:
             raise ValueError("instance_environment cannot be None")
-        self._instance_environment: InstanceEnvironment = instance_environment
+        self.config: InstanceConfig = InstanceConfig(instance_environment)
         self._seed: int = seed
         self.name: str = f"{str(instance_environment).replace("|", "-").replace(",", "-")}"
         self.jobs: List[Job] = []
         self.centers: List[Center] = []
-        self._create_instance_parameters()
+        self._create_instance()
 
     def __str__(self) -> str:
         return f"{str(self.name)}_s{self._seed}"
+    
+    def print_to_file(self) -> None:
+        """prints instance with config parameters to file"""
+        pass
 
-    def _create_instance_parameters(self) -> None:
-        """Generate parameters for the scheduling instance, including jobs, machines, and operations."""
-        if len(self.jobs) != 0 and len(self.centers) != 0:
-            # avoid regenerating if instance already exists
-            return
+    def _create_centers_machines(self, machine_rand: random.Random) -> None:
+        """creates centers and machines according to instanceConfig"""
+        num_centers = self.config.num_centers
+        num_machines = self.config.num_machines
+        is_p_different: bool = self.config.p_different
+        is_p_unrelated: bool = self.config.p_unrelated
+        setup_necessary: bool = self.config.setup_necessary
+        breakdowns_possible: bool = self.config.breakdowns_possible
 
-        # TODO create a dataclass for all instance generation parameters
-        # most basic parameters
-        min_processtime: int = 3
-        max_processtime: int = 19
-        job_seed: int = self._instance_environment.job_seed + self._seed
-        machine_seed: int = self._instance_environment.machine_seed + self._seed
-        job_rand = random.Random(job_seed)
-        machine_rand = random.Random(machine_seed)
-
-        # some parameter for further use few lines down
-        is_flowshop: bool = self._instance_environment.is_flowshop
-        is_jobshop: bool = self._instance_environment.is_jobshop
-        is_openshop: bool = self._instance_environment.is_openshop
-        is_p_different: bool = self._instance_environment.is_different
-        is_p_unrelated: bool = self._instance_environment.is_unrelated
-        is_eligible: bool = self._instance_environment.is_eligible
-        is_same_mj: bool = self._instance_environment.is_same_eligible_machines
-        setup_necessary: bool = self._instance_environment.is_setuptime_seq
-        breakdowns_possible: bool = self._instance_environment.is_breakdown
-
-        # Cases for Hybrids
-        # to avoid recalculating job sequences, releasedates, duedates ..
-        prev_center: Optional[Center] = None
-        # probability_eligible: Dict[int, float] = {}
-        # to avoid recalculating machine setup times, breakdowns,  ..
-        prev_center_machines: Dict[Machine, List[int]] = {}
-
-        # centers
         self.centers: List[Center] = []
-        num_centers = self._instance_environment.num_centers
-
         for i in range(num_centers):
-            self.centers.append(Center(i, None))
-            machines: List[Machine] = []
-            num_machines = self._instance_environment.num_machines
+            self.centers.append(Center(i))
             for j in range(num_machines):
                 speed: float = 1.0
                 if is_p_different or is_p_unrelated:
-                    speed = round(machine_rand.uniform(0.9, 1.1), 1)
+                    min_speed = self.config.machine_speed[0]
+                    max_speed = self.config.machine_speed[1]
+                    speed = round(machine_rand.uniform(min_speed, max_speed), 1)
                 setup_times: Optional[Dict] = None
                 if setup_necessary:
                     setup_times = {}
@@ -86,25 +63,148 @@ class Instance:
                     breakdowns = []
                 machine = Machine(
                     j, self.centers[i], speed, setup_times, breakdowns)
-                machines.append(machine)
-            self.centers[i].machines = machines
+                self.centers[i].machines.append(machine)
+    
+    def _create_operations_per_job(self, job_rand: random.Random) -> List[OperationInitializer]:
+        num_operations = self.config.num_operations
+        is_p_unrelated: bool = self.config.p_unrelated
+        is_eligible: bool = self.config.eligible
+        # TODO implement case that only one center is eligible
+        # is_same_mj: bool = self.config.same_mj
+        min_processtime, max_processtime = self.config.process_time
+        eligible_machines: List[Machine] = []
 
+        for center in self.centers:
+            eligible_machines.extend(center.machines)
+
+        operation_initializers: List[OperationInitializer] = []
+        # initialize
+        for o in range(num_operations):
+            new_operation = OperationInitializer(id=o)
+            operation_initializers.append(new_operation)
+        
+        if is_eligible:
+            for o, _ in enumerate(operation_initializers):
+                machines_at_index = [center.machines[o] for center in self.centers if center.machines[o]]
+                if machines_at_index:
+                    # change minimum to 0 in case for openshop?
+                    num_selected = job_rand.randint(1, len(machines_at_index))
+                    selected_machines = job_rand.sample(machines_at_index, num_selected)
+                    eligible_machines.extend(selected_machines)
+                else:
+                    raise ValueError(
+                        f"No valid machines found at index {o} across centers!")
+                new_operation.eligible_machines = eligible_machines
+        else:
+            for o, _ in enumerate(operation_initializers):
+                new_operation.eligible_machines = [center.machines[o]
+                                     for center in self.centers if center.machines[o]]
+    
+        for op in operation_initializers:
+            processing_times: Dict[Machine, float] = {}
+            if is_p_unrelated:
+                processing_times = {m: round(job_rand.randint(min_processtime, max_processtime) / m.processing_speed, 1) for m in eligible_machines if m}
+            else:
+                processing_time = job_rand.randint(min_processtime, max_processtime)
+                processing_times = {m: round(processing_time / m.processing_speed, 1) for m in eligible_machines if m}
+
+            new_operation.processing_times = processing_times
+            operation_initializers.append(new_operation)
+
+        return operation_initializers
+
+    def _create_jobs(self, job_rand: random.Random) -> None:
         # jobs and operations
         self.jobs: List[Job] = []
-        num_jobs: int = self._instance_environment.num_jobs
-        num_operations: int = self._instance_environment.num_operations
-        average_processingtime: float = ((max_processtime + min_processtime)/2)
-        makespan_estimation = float(
-            math.ceil(num_jobs * average_processingtime/num_centers))
+        job_initializers: List[JobInitializer] = []
+        operation_initializers: List[OperationInitializer] = []
+        num_jobs: int = self.config.num_jobs
+        num_operations: int = self.config.num_operations
+        num_machines: int = self.config.num_machines
+        num_centers: int = self.config.num_centers
+        min_processtime, max_processtime = self.config.process_time
+        min_predecessors, max_predecessors = self.config.predecessors
 
-        # job shop sequence is set later
-        if is_flowshop:
-            sequence = list(range(num_operations))
-        elif is_openshop:
-            sequence = []  # TODO not every job has to go through every machine
-        elif not is_jobshop:
-            sequence = None
-            makespan_estimation = math.ceil(makespan_estimation / num_machines)
+        # alpha field parameters
+        is_flowshop: bool = self.config.flowshop
+        is_jobshop: bool = self.config.jobshop
+        is_openshop: bool = self.config.openshop
+        
+        # beta field parameters
+        is_release: bool = self.config.release
+        is_due: bool = self.config.due
+        is_deadline: bool = self.config.deadline
+        is_precedence: bool = self.config.precedence
+
+        average_processingtime: float = (min_processtime + max_processtime)/2
+        makespan_estimation = float(math.ceil(num_jobs * average_processingtime/num_centers))
+
+        for j in range(num_jobs):
+            operation_initializers = self._create_operations_per_job(job_rand)
+            job_initializers.append(JobInitializer(id=j))
+
+        for job_init in job_initializers:
+            if is_flowshop:
+                sequence = list(range(num_machines))
+            elif is_openshop:
+                sequence = [] # determined when solving
+            elif not is_jobshop:
+                sequence = job_rand.sample(range(num_machines), num_machines)
+                makespan_estimation = math.ceil(makespan_estimation / num_machines)
+        
+            release_time = float(job_rand.randint(0, math.ceil(makespan_estimation*self.config.release_factor))) if is_release else None
+            duedate_estimation = float((release_time or 0) + math.ceil(num_operations * average_processingtime * self.config.due_date_factors[0]))
+            due_date = (float(math.ceil(duedate_estimation + job_rand.randint(0, math.ceil(makespan_estimation*self.config.due_date_factors[1])))),
+                        float(job_rand.randint(int(self.config.due_date_penalty[0]), int(self.config.due_date_penalty[1])))) if is_due else None
+            deadline_estimation = float(
+                (release_time or 0) + math.ceil(num_operations * average_processingtime * self.config.due_date_factors[2]))
+            if due_date:
+                    deadline_estimation = max(deadline_estimation, due_date[0])
+            deadline = math.ceil(deadline_estimation + job_rand.randint(0, math.ceil(
+                makespan_estimation * self.config.deadline_factor))) if is_deadline else None
+            
+            predecessors: List[Job] = []
+            if is_precedence:
+                possible_pred: List[Job] = []
+                for job in self.jobs:
+                    pred_earliest_possible = (
+                        job.release_time or 0) + job.total_processing_time()
+                    if not release_time or release_time > pred_earliest_possible:
+                        possible_pred.append(job)
+                    num_pred: int = min(
+                        len(possible_pred), job_rand.randint(min_predecessors, max_predecessors))
+                if num_pred > 0:
+                    predecessors = job_rand.sample(possible_pred, k=num_pred)
+
+            job_init.release_time = release_time
+            job_init.due_date = due_date
+            job_init.deadline = deadline
+            job_init.predecessors = predecessors
+
+            
+
+    def _create_instance(self) -> None:
+        """Generate parameters for the scheduling instance, including jobs, machines, and operations."""
+        if len(self.jobs) != 0 and len(self.centers) != 0:
+            return
+
+        job_seed: int = self.config.job_seed + self._seed
+        job_rand = random.Random(job_seed)
+        machine_seed: int = self.config.machine_seed + self._seed
+        machine_rand = random.Random(machine_seed)
+
+        # some parameter for further use few lines down
+        setup_necessary: bool = self.config.setup_necessary
+        breakdowns_possible: bool = self.config.breakdowns_possible
+
+        # Cases for Hybrids
+        # to avoid recalculating job sequences, releasedates, duedates ..
+        prev_center: Optional[Center] = None
+
+        self._create_centers_machines(machine_rand)
+        self._create_jobs(job_rand)
+
+        
 
         for center in self.centers:
             if center.machines is None or (center.machines and len(center.machines) == 0):
@@ -113,53 +213,7 @@ class Instance:
             machines = center.machines
             for j in range(num_jobs):
                 for op_idx in range(num_operations):
-                    eligible_machines: List[Machine] = []
-                    if is_eligible:
-                        # case we have multi center shop problem
-                        if (is_flowshop or is_jobshop or is_openshop) and prev_center is None:
-                            # TODO make sure eligible machines align with required sequence
-                            # make sure that when at least one machine per stage is eligible
-                            if is_flowshop:
-                                eligible_machines = machine_rand.sample(
-                                    machines, k=machine_rand.randint(0, len(machines)))
-                            elif is_jobshop:
-                                eligible_machines = machine_rand.sample(
-                                    machines, k=machine_rand.randint(0, len(machines)))
-                            else:
-                                eligible_machines = machine_rand.sample(
-                                    machines, k=machine_rand.randint(0, len(machines)))
-                            
-                        elif (is_flowshop or is_jobshop or is_openshop) and prev_center is not None:
-                            # case if we have the same eligibale machines across centers
-                            if is_same_mj:
-                                if self.jobs[j].operations[op_idx].eligible_machines:
-                                    raise ValueError("Eligibale Machines not found in operations!")
-                                eligible_machines = [
-                                    machine for machine in center.machines
-                                    if machine.id in (self.jobs[j].operations[op_idx].eligible_machines or [])
-                                ]
-                            else:  
-                                # TODO make sure eligible machines align with required sequence
-                                eligible_machines = machine_rand.sample(
-                                    machines, k=machine_rand.randint(1, len(machines)))
-                        else: # case for single center P, Q and R
-                           eligible_machines = machine_rand.sample(
-                               machines, k=machine_rand.randint(1, len(machines)))
-                    else:
-                        eligible_machines = machines
-
-                    processing_time: Optional[int] = None
-                    processing_times: Dict[Machine, float] = {}
-                    if is_p_unrelated and prev_center is None:
-                        processing_times = {m: round(job_rand.randint(
-                            min_processtime, max_processtime)/m.processing_speed, 1) for m in eligible_machines}
-                    else:
-                        if prev_center is not None:
-                            # case of identital and different parallel machines
-                            processing_time = job_rand.randint(
-                                min_processtime, max_processtime)
-                            processing_times = {
-                                m: round(processing_time/m.processing_speed, 1) for m in eligible_machines}
+                    
 
                     # if operations have been initialized before replace processing times and eligible machines
                     if len(prev_center_jobs.items()) != 0:
@@ -179,39 +233,38 @@ class Instance:
 
                 # will need to be adjusted once more alpha fields are added
                 # make sure given sequence contains
-                if is_jobshop:
-                    sequence = job_rand.sample(range(num_operations), num_operations)
-
+                
+                # TODO here jobinitializer
                 # create job parameters
                 release_time = float(job_rand.randint(0, math.ceil(
-                    makespan_estimation*0.43))) if self._instance_environment.is_release else None
+                    makespan_estimation*self.config.release_factor))) if is_release else None
                 duedate_estimation = float(
-                    (release_time or 0) + math.ceil(num_operations * average_processingtime * 1.49))
-                due_date = (float(math.ceil(duedate_estimation + job_rand.randint(0, math.ceil(makespan_estimation*0.19)))),
-                            float(job_rand.randint(2, 7))) if self._instance_environment.is_due else None
+                    (release_time or 0) + math.ceil(num_operations * average_processingtime * self.config.due_date_factors[0]))
+                due_date = (float(math.ceil(duedate_estimation + job_rand.randint(0, math.ceil(makespan_estimation*self.config.due_date_factors[1])))),
+                            float(job_rand.randint(int(self.config.due_date_penalty[0]), int(self.config.due_date_penalty[1])))) if is_due else None
                 deadline_estimation = float(
-                    (release_time or 0) + math.ceil(num_operations * average_processingtime * 1.99))
+                    (release_time or 0) + math.ceil(num_operations * average_processingtime * self.config.due_date_factors[2]))
                 if due_date:
                     deadline_estimation = max(deadline_estimation, due_date[0])
                 deadline = math.ceil(deadline_estimation + job_rand.randint(0, math.ceil(
-                    makespan_estimation * 0.11))) if self._instance_environment.is_deadline else None
+                    makespan_estimation * self.config.deadline_factor))) if is_deadline else None
                 operations: List[Operation] = []
 
                 predecessors: List[Job] = []
                 # TODO think about better approach this only creates outtrees
                 # also: satisfiability <-> deadlines
-                if self._instance_environment.is_precedence:
+                if is_precedence:
                     possible_pred: List[Job] = []
                     for job in self.jobs:
                         pred_earliest_possible = (
                             job.release_time or 0) + job.total_processing_time()
                         if not release_time or release_time >= pred_earliest_possible:
                             possible_pred.append(job)
-                    min_num_pred: int = min(
-                        len(possible_pred), job_rand.randint(0, 2))
-                    if min_num_pred > 0:
+                        num_pred: int = min(
+                        len(possible_pred), job_rand.randint(self.config.predecessors[0], self.config.predecessors[1]))
+                    if num_pred > 0:
                         predecessors = job_rand.sample(
-                            possible_pred, k=min_num_pred)
+                            possible_pred, k=num_pred)
 
                 # Create the job
                 job = Job(

@@ -5,6 +5,18 @@ from typing import List, Optional, Tuple
 from operation import Operation
 
 
+class JobInitializer:
+    """dummy class to hold inital job parameters"""
+
+    def __init__(self, id: int) -> None:
+        self.id = id
+        self.operations = None
+        self.release_time: Optional[float] = None
+        self.due_date: Optional[Tuple[float, float]] = None
+        self.deadline: Optional[float] = None
+        self.predecessors: Optional[List['Job']] = None
+
+
 class Job:
     def __init__(self, id: int, operations: List[Operation], sequence: Optional[List[int]] = None, release_time: Optional[float] = None, due_date: Optional[Tuple[float, float]] = None, deadline: Optional[float] = None, predecessors: Optional[List['Job']] = None) -> None:
         """
